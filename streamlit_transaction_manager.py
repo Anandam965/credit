@@ -172,7 +172,7 @@ if email and password:
             with tabs[2]:
                 user_list = cursor.execute("SELECT id, name, email FROM users").fetchall()
                 selected_user = st.selectbox("Select User", options=user_list, format_func=lambda x: x[1])
-                amount = st.number_input("Amount", min_value=0.0, format="%.2f")
+                amount = st.number_input("Amount", format="%.2f")  # ✔️ allow negative
                 type_ = st.radio("Type", ["credit", "debit"])
                 description = st.text_input("Description")
                 if st.button("Submit Transaction"):
@@ -191,11 +191,24 @@ if email and password:
             with tabs[4]:
                 user_list = cursor.execute("SELECT id, name, email FROM users").fetchall()
                 selected_user = st.selectbox("Select User to Delete From", options=user_list, format_func=lambda x: x[1])
+
+                st.write("### Delete a Single Transaction")
                 transactions = get_transactions(selected_user[0])
                 trans_ids = {f"{t[0]} | {t[4][:16]} | {t[2]} ₹{t[1]}": t[0] for t in transactions}
                 selected = st.selectbox("Select Transaction to Delete", list(trans_ids.keys()))
-                if st.button("Delete Transaction"):
+                if st.button("Delete Selected Transaction"):
                     delete_transaction(selected_user[0], trans_ids[selected])
+
+                st.write("### Delete Transactions Between Dates")
+                from_date = st.date_input("From Date")
+                to_date = st.date_input("To Date")
+                if st.button("Delete Transactions in Range"):
+                    cursor.execute('''
+                        DELETE FROM transactions
+                        WHERE user_id = ? AND DATE(timestamp) BETWEEN ? AND ?
+                    ''', (selected_user[0], from_date.isoformat(), to_date.isoformat()))
+                    conn.commit()
+                    st.success(f"Transactions between {from_date} and {to_date} deleted successfully.")
 
             with tabs[5]:
                 user_list = cursor.execute("SELECT id, name, email FROM users").fetchall()
@@ -207,7 +220,6 @@ if email and password:
                 current_password = st.text_input("Current Password", type="password")
                 new_password = st.text_input("New Password", type="password")
                 confirm_password = st.text_input("Confirm New Password", type="password")
-
                 if st.button("Update Password"):
                     if current_password != user[3]:
                         st.error("Current password is incorrect.")
@@ -222,23 +234,31 @@ if email and password:
 
             with tabs[7]:
                 st.subheader("All Registered Users")
-                users = cursor.execute("SELECT id, name, email FROM users").fetchall()
+                users = cursor.execute("SELECT id, name, email, password FROM users").fetchall()
                 user_data = []
                 for u in users:
-                    cursor.execute("SELECT COUNT(*), SUM(CASE WHEN type='credit' THEN amount ELSE 0 END), SUM(CASE WHEN type='debit' THEN amount ELSE 0 END) FROM transactions WHERE user_id = ?", (u[0],))
-                    count, total_credit, total_debit = cursor.fetchone()
+                    cursor.execute("""
+                        SELECT 
+                            SUM(CASE WHEN type='credit' THEN amount ELSE 0 END), 
+                            SUM(CASE WHEN type='debit' THEN amount ELSE 0 END) 
+                        FROM transactions WHERE user_id = ?
+                    """, (u[0],))
+                    total_credit, total_debit = cursor.fetchone()
+                    total_due = (total_debit or 0) - (total_credit or 0)
                     user_data.append({
                         "User ID": u[0],
                         "Name": u[1],
                         "Email": u[2],
-                        "Transactions": count,
+                        "Password": u[3],
                         "Total Credit": f"Rs.{total_credit:.2f}" if total_credit else "Rs.0.00",
-                        "Total Debit": f"Rs.{total_debit:.2f}" if total_debit else "Rs.0.00"
+                        "Total Debit": f"Rs.{total_debit:.2f}" if total_debit else "Rs.0.00",
+                        "Total Due": f"Rs.{total_due:.2f}"
                     })
                 st.dataframe(user_data, use_container_width=True)
 
         else:
             tabs = st.tabs(["📄 View Statement", "📤 Export as PDF", "🔒 Change Password"])
+
             with tabs[0]:
                 transactions = get_transactions(user[0])
                 st.subheader("Transaction History")
@@ -255,7 +275,6 @@ if email and password:
                 current_password = st.text_input("Current Password", type="password")
                 new_password = st.text_input("New Password", type="password")
                 confirm_password = st.text_input("Confirm New Password", type="password")
-
                 if st.button("Update Password"):
                     if current_password != user[3]:
                         st.error("Current password is incorrect.")
